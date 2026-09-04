@@ -81,7 +81,7 @@ func (c *Client) call(req request, timeout time.Duration) (response, error) {
 	if err != nil {
 		return response{}, err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
 		return response{}, err
 	}

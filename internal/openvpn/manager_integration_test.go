@@ -66,7 +66,7 @@ func fakeOpenVPN() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	conn, err := listener.Accept()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -79,8 +79,8 @@ func fakeOpenVPN() {
 		}
 	}
 	if os.Getenv("OVPNTUI_FAKE_SSO") == "1" {
-		fmt.Fprintln(conn, ">STATE:1788541200,AUTH_PENDING,,,,")
-		fmt.Fprintln(conn, ">INFOMSG:WEB_AUTH:external:https://login.example.test/authorize?state=one-time-secret")
+		_, _ = fmt.Fprintln(conn, ">STATE:1788541200,AUTH_PENDING,,,,")
+		_, _ = fmt.Fprintln(conn, ">INFOMSG:WEB_AUTH:external:https://login.example.test/authorize?state=one-time-secret")
 		time.Sleep(100 * time.Millisecond)
 	}
 	fmt.Println("TUN/TAP device tun-test opened")

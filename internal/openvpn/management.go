@@ -61,7 +61,7 @@ func (m *Manager) manage(id string, s *session) {
 		}
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if _, err := fmt.Fprint(conn, "version 5\nstate on\nhold release\n"); err != nil {
 		m.failManagement(id, s, fmt.Errorf("initialize OpenVPN management channel: %w", err))

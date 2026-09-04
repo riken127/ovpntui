@@ -58,7 +58,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	if err := s.listen(); err != nil {
 		return err
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	go func() {
 		<-ctx.Done()
 		_ = s.listener.Close()
@@ -150,7 +150,7 @@ func removeStaleSocket(path string) error {
 }
 
 func (s *Server) handle(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(35 * time.Second))
 	decoder := json.NewDecoder(io.LimitReader(conn, 64*1024))
 	decoder.DisallowUnknownFields()

@@ -25,7 +25,7 @@ func ValidateForExecution(p Profile) error {
 	if err != nil {
 		return fmt.Errorf("open imported configuration: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)

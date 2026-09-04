@@ -64,7 +64,7 @@ func (s *Store) Import(source string) (Profile, error) {
 	if err != nil {
 		return Profile{}, err
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 	normalized, needsAuth, err := normalize(in, filepath.Dir(abs), p.Dir)
 	if err != nil {
 		return Profile{}, err
@@ -233,7 +233,7 @@ func copyPrivateFile(source, destination string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 	info, err := in.Stat()
 	if err != nil {
 		return err
