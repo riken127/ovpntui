@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/henriquesilva/ovpntui/internal/config"
-	"github.com/henriquesilva/ovpntui/internal/openvpn"
+	"github.com/riken127/ovpntui/internal/config"
+	"github.com/riken127/ovpntui/internal/openvpn"
 )
 
 // EnsureRunning starts the per-user daemon when it is not already available.

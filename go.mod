@@ -1,4 +1,4 @@
-module github.com/henriquesilva/ovpntui
+module github.com/riken127/ovpntui
 
 go 1.24.0
 

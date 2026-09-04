@@ -9,7 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/henriquesilva/ovpntui/internal/openvpn"
+	"github.com/riken127/ovpntui/internal/openvpn"
 )
 
 type profileDelegate struct{}

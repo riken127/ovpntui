@@ -36,8 +36,8 @@ Em Debian/Ubuntu:
 
 ```sh
 sudo apt install openvpn libsecret-tools
-go install github.com/henriquesilva/ovpntui/cmd/ovpntui@latest
-go install github.com/henriquesilva/ovpntui/cmd/ovpntuid@latest
+go install github.com/riken127/ovpntui/cmd/ovpntui@latest
+go install github.com/riken127/ovpntui/cmd/ovpntuid@latest
 ```
 
 Para compilar o checkout (os dois binários são necessários e devem permanecer

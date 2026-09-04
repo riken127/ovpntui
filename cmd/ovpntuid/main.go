@@ -10,10 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/henriquesilva/ovpntui/internal/config"
-	"github.com/henriquesilva/ovpntui/internal/daemon"
-	"github.com/henriquesilva/ovpntui/internal/openvpn"
-	"github.com/henriquesilva/ovpntui/internal/profile"
+	"github.com/riken127/ovpntui/internal/config"
+	"github.com/riken127/ovpntui/internal/daemon"
+	"github.com/riken127/ovpntui/internal/openvpn"
+	"github.com/riken127/ovpntui/internal/profile"
 )
 
 var version = "dev"

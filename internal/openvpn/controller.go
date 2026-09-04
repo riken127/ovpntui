@@ -1,8 +1,8 @@
 package openvpn
 
 import (
-	"github.com/henriquesilva/ovpntui/internal/credentials"
-	"github.com/henriquesilva/ovpntui/internal/profile"
+	"github.com/riken127/ovpntui/internal/credentials"
+	"github.com/riken127/ovpntui/internal/profile"
 )
 
 // Controller is implemented by both the local supervisor and the daemon client.

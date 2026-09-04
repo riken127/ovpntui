@@ -1,8 +1,8 @@
 package daemon
 
 import (
-	"github.com/henriquesilva/ovpntui/internal/credentials"
-	"github.com/henriquesilva/ovpntui/internal/openvpn"
+	"github.com/riken127/ovpntui/internal/credentials"
+	"github.com/riken127/ovpntui/internal/openvpn"
 )
 
 const (

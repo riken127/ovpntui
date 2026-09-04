@@ -7,9 +7,9 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/henriquesilva/ovpntui/internal/credentials"
-	"github.com/henriquesilva/ovpntui/internal/openvpn"
-	"github.com/henriquesilva/ovpntui/internal/profile"
+	"github.com/riken127/ovpntui/internal/credentials"
+	"github.com/riken127/ovpntui/internal/openvpn"
+	"github.com/riken127/ovpntui/internal/profile"
 )
 
 type authorizationController struct {

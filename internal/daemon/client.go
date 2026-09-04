@@ -7,10 +7,10 @@ import (
 	"net"
 	"time"
 
-	"github.com/henriquesilva/ovpntui/internal/config"
-	"github.com/henriquesilva/ovpntui/internal/credentials"
-	"github.com/henriquesilva/ovpntui/internal/openvpn"
-	"github.com/henriquesilva/ovpntui/internal/profile"
+	"github.com/riken127/ovpntui/internal/config"
+	"github.com/riken127/ovpntui/internal/credentials"
+	"github.com/riken127/ovpntui/internal/openvpn"
+	"github.com/riken127/ovpntui/internal/profile"
 )
 
 // Client implements openvpn.Controller over the daemon Unix socket.
