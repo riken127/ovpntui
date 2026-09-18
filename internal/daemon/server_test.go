@@ -236,3 +236,56 @@ func waitForClient(t *testing.T, paths config.Paths) *Client {
 	t.Fatal("daemon did not become ready")
 	return nil
 }
+
+type blockingShutdownBackend struct {
+	*fakeBackend
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingShutdownBackend) Shutdown(ctx context.Context) error {
+	close(b.entered)
+	select {
+	case <-b.release:
+		return b.fakeBackend.Shutdown(ctx)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestServerRetainsLockUntilVPNCleanup(t *testing.T) {
+	t.Parallel()
+	paths := daemonTestPaths(t)
+	b := &blockingShutdownBackend{
+		fakeBackend: &fakeBackend{states: make(map[string]openvpn.Snapshot), logs: make(map[string][]string)},
+		entered:     make(chan struct{}), release: make(chan struct{}),
+	}
+	server := NewServer(paths, b, fakeProfiles{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(ctx) }()
+	client := waitForClient(t, paths)
+	client.Close()
+	cancel()
+	select {
+	case <-b.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("shutdown did not begin")
+	}
+	second := NewServer(paths, b.fakeBackend, fakeProfiles{})
+	err := second.listen()
+	if err == nil {
+		_ = second.Close()
+		t.Error("replacement daemon acquired lock before route cleanup")
+	}
+	close(b.release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("shutdown did not finish")
+	}
+}

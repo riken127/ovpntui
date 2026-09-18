@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"os/user"
@@ -42,6 +43,10 @@ type session struct {
 	log              *os.File
 	done             chan struct{}
 	stopping         bool
+	stopError        string
+	managementMu     sync.Mutex
+	managementConn   net.Conn
+	managementReady  chan struct{}
 }
 
 // Manager supervises one OpenVPN child per profile.
@@ -51,6 +56,8 @@ type Manager struct {
 	openvpnBin string
 	privilege  PrivilegeMode
 	mu         sync.RWMutex
+	startMu    sync.Mutex
+	closing    bool
 	sessions   map[string]*session
 	states     map[string]Snapshot
 	logs       map[string][]string
@@ -80,8 +87,14 @@ func (m *Manager) Logs(profileID string) []string {
 }
 
 func (m *Manager) Start(p profile.Profile, credential credentials.Value) error {
+	// Serialize startup with shutdown so an in-flight launch cannot escape it.
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	if m.closing || m.ctx.Err() != nil {
+		return errors.New("VPN manager is shutting down")
+	}
 	m.mu.RLock()
-	if current, ok := m.states[p.ID]; ok && (current.Status == Connecting || current.Status == Connected || current.Status == Disconnecting) {
+	if _, ok := m.sessions[p.ID]; ok {
 		m.mu.RUnlock()
 		return errors.New("this profile is already running")
 	}
@@ -106,7 +119,7 @@ func (m *Manager) Start(p profile.Profile, credential credentials.Value) error {
 	m.mu.Unlock()
 	m.notify()
 
-	stamp := time.Now().Format("20060102-150405")
+	stamp := time.Now().Format("20060102-150405.000000000")
 	logPath := filepath.Join(m.paths.LogsDir, p.ID+"-"+stamp+".log")
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -151,9 +164,18 @@ func (m *Manager) Start(p profile.Profile, credential credentials.Value) error {
 		return m.failStart(p.ID, err)
 	}
 	args := []string{
+		// Pull filters use first-match order, so reserve our timeout policy
+		// before any accept filters supplied by the profile.
+		"--pull-filter", "ignore", "ping",
 		"--config", p.ConfigPath(), "--cd", p.Dir, "--writepid", pidFile, "--verb", "3",
 		"--management", managementSocket, "unix", "--management-client-user", managementUser,
 		"--management-hold", "--setenv", "IV_SSO", "webauth,openurl",
+		// Let OpenVPN itself remove its routes even if the unprivileged daemon
+		// disappears. A soft restart must not retain a dead persist-tun tunnel.
+		"--management-signal", "--remap-usr1", "SIGTERM",
+		// Reset explicit timers before expanding keepalive; profiles may use
+		// either form, and OpenVPN rejects a mixture with nonzero timers.
+		"--ping", "0", "--ping-restart", "0", "--keepalive", "10", "30",
 	}
 	if authFile != "" {
 		args = append(args, "--auth-user-pass", authFile, "--auth-nocache")
@@ -164,9 +186,8 @@ func (m *Manager) Start(p profile.Profile, credential credentials.Value) error {
 		_ = logFile.Close()
 		return m.failStart(p.ID, err)
 	}
-	// The process is deliberately not tied directly to the UI context. Shutdown
-	// sends signals to the whole process group first, which also handles elevated
-	// children correctly; CommandContext could kill only the sudo/pkexec wrapper.
+	// Shutdown uses the management channel. Killing a sudo/pkexec wrapper can
+	// leave its elevated child (and that child's routes) alive.
 	cmd := exec.Command(command, commandArgs...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := cmd.StdoutPipe()
@@ -186,7 +207,7 @@ func (m *Manager) Start(p profile.Profile, credential credentials.Value) error {
 		_ = logFile.Close()
 		return m.failStart(p.ID, explainStartError(err, m.privilege))
 	}
-	s := &session{cmd: cmd, pidFile: pidFile, authFile: authFile, managementSocket: managementSocket, log: logFile, done: make(chan struct{})}
+	s := &session{cmd: cmd, pidFile: pidFile, authFile: authFile, managementSocket: managementSocket, log: logFile, done: make(chan struct{}), managementReady: make(chan struct{})}
 	m.mu.Lock()
 	m.sessions[p.ID] = s
 	state = m.states[p.ID]
@@ -252,8 +273,13 @@ func (m *Manager) monitor(id string, s *session, stdout, stderr io.Reader) {
 	readers.Add(2)
 	go func() { defer readers.Done(); m.scan(id, s, stdout) }()
 	go func() { defer readers.Done(); m.scan(id, s, stderr) }()
-	err := s.cmd.Wait()
 	readers.Wait()
+	err := s.cmd.Wait()
+	s.managementMu.Lock()
+	if s.managementConn != nil {
+		_ = s.managementConn.Close()
+	}
+	s.managementMu.Unlock()
 	_ = s.log.Close()
 	_ = os.Remove(s.authFile)
 	_ = os.Remove(s.pidFile)
@@ -268,7 +294,7 @@ func (m *Manager) monitor(id string, s *session, stdout, stderr io.Reader) {
 	state.ConnectedAt = time.Time{}
 	wasStopping := s.stopping
 	delete(m.sessions, id)
-	if wasStopping {
+	if wasStopping && s.stopError == "" && err == nil {
 		if state.Status != Disconnecting {
 			state.Status = Disconnecting
 		}
@@ -276,8 +302,9 @@ func (m *Manager) monitor(id string, s *session, stdout, stderr io.Reader) {
 		state.Error = ""
 		state.PID = 0
 	} else {
-		if state.Status == Connecting || state.Status == Connected {
-			_ = transition(&state, Failed)
+		state.Status = Failed
+		if s.stopError != "" {
+			state.Error = s.stopError
 		}
 		if state.Error == "" {
 			if err != nil {
@@ -326,6 +353,9 @@ func (m *Manager) scan(id string, s *session, reader io.Reader) {
 		}
 		if event.Failure != "" {
 			state.Error = event.Failure
+			if s.stopping {
+				s.stopError = event.Failure
+			}
 		}
 		m.states[id] = state
 		m.mu.Unlock()
@@ -341,7 +371,7 @@ func (m *Manager) Stop(profileID string) error {
 		return errors.New("profile is not running")
 	}
 	state := m.states[profileID]
-	if state.Status == Disconnecting {
+	if s.stopping {
 		m.mu.Unlock()
 		return nil
 	}
@@ -351,24 +381,16 @@ func (m *Manager) Stop(profileID string) error {
 	}
 	s.stopping = true
 	m.states[profileID] = state
-	pid := s.cmd.Process.Pid
 	m.mu.Unlock()
 	m.notify()
-	if err := syscall.Kill(-pid, syscall.SIGINT); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		_ = s.cmd.Process.Signal(os.Interrupt)
-	}
-	go func() {
-		select {
-		case <-s.done:
-		case <-time.After(8 * time.Second):
-			_ = syscall.Kill(-pid, syscall.SIGKILL)
-			_ = s.cmd.Process.Kill()
-		}
-	}()
+	go m.stopSession(profileID, s)
 	return nil
 }
 
 func (m *Manager) Shutdown(ctx context.Context) error {
+	m.startMu.Lock()
+	m.closing = true
+	m.startMu.Unlock()
 	m.mu.RLock()
 	ids := make([]string, 0, len(m.sessions))
 	for id := range m.sessions {
@@ -385,7 +407,14 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		count := len(m.sessions)
 		m.mu.RUnlock()
 		if count == 0 {
-			return nil
+			var shutdownErr error
+			for _, id := range ids {
+				state := m.Snapshot(id)
+				if state.Status == Failed {
+					shutdownErr = errors.Join(shutdownErr, fmt.Errorf("profile %s: %s", id, state.Error))
+				}
+			}
+			return shutdownErr
 		}
 		select {
 		case <-ctx.Done():
@@ -500,13 +529,6 @@ func managementSocketPath(runtimeDir, profileID string) (string, error) {
 		return "", fmt.Errorf("OpenVPN management socket path is too long (%d bytes); set XDG_RUNTIME_DIR to a shorter private directory", len(path))
 	}
 	return path, nil
-}
-
-func signalProcessGroup(pid int) error {
-	if err := syscall.Kill(-pid, syscall.SIGINT); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		return err
-	}
-	return nil
 }
 
 func explainStartError(err error, mode PrivilegeMode) error {

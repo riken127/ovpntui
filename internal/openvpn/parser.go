@@ -16,10 +16,12 @@ var (
 	interfacePatterns = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)TUN/TAP device ([[:alnum:]_.:-]+) opened`),
 		regexp.MustCompile(`(?i)net_iface_up: set ([[:alnum:]_.:-]+) up`),
+		regexp.MustCompile(`(?i)Opened utun device ([[:alnum:]_.:-]+)`),
 	}
 	ipPatterns = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)net_addr_v4_add: ([0-9.]+)(?:/[0-9]+)? dev`),
 		regexp.MustCompile(`(?i)ifconfig ([0-9.]+) `),
+		regexp.MustCompile(`(?i)ifconfig [[:alnum:]_.:-]+ ([0-9.]+) `),
 		regexp.MustCompile(`(?i)ifconfig_pool_remote_ip=[^,]*,ifconfig_pool_local_ip=([0-9.]+)`),
 	}
 )

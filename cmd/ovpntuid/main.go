@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/riken127/ovpntui/internal/config"
 	"github.com/riken127/ovpntui/internal/daemon"
@@ -52,11 +51,5 @@ func run() error {
 	defer stop()
 	manager := openvpn.NewManager(ctx, paths, *openvpnBin, mode)
 	server := daemon.NewServer(paths, manager, profile.NewStore(paths.ProfilesDir))
-	serveErr := server.Serve(ctx)
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-	defer cancel()
-	if err := manager.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shutdown OpenVPN sessions: %w", err)
-	}
-	return serveErr
+	return server.Serve(ctx)
 }

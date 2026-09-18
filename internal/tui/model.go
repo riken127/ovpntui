@@ -144,7 +144,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshItems(time.Now())
 		if p, ok := m.selectedProfile(); ok {
 			state := m.manager.Snapshot(p.ID)
-			if state.Status == openvpn.Failed && state.Error != "" {
+			if (state.Status == openvpn.Failed || state.Status == openvpn.Disconnecting) && state.Error != "" {
 				m.setError(fmt.Errorf("%s: %s", p.Name, state.Error))
 			} else if state.AuthError != "" {
 				m.status, m.statusError = state.AuthError+" — open manually: "+state.AuthURL, true

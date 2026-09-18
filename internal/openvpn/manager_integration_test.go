@@ -49,7 +49,18 @@ func fakeSudo() {
 
 func fakeOpenVPN() {
 	managementSocket := ""
+	managementSignal := false
+	remap := ""
+	if path := os.Getenv("OVPNTUI_FAKE_ARGS"); path != "" {
+		_ = os.WriteFile(path, []byte(strings.Join(os.Args[1:], "\n")), 0o600)
+	}
 	for i, arg := range os.Args {
+		if arg == "--management-signal" {
+			managementSignal = true
+		}
+		if arg == "--remap-usr1" && i+1 < len(os.Args) {
+			remap = os.Args[i+1]
+		}
 		if arg == "--writepid" && i+1 < len(os.Args) {
 			_ = os.WriteFile(os.Args[i+1], []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600)
 		}
@@ -67,6 +78,9 @@ func fakeOpenVPN() {
 		os.Exit(2)
 	}
 	defer func() { _ = listener.Close() }()
+	if os.Getenv("OVPNTUI_FAKE_SLOW_START") == "1" {
+		time.Sleep(100 * time.Millisecond)
+	}
 	conn, err := listener.Accept()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -85,13 +99,58 @@ func fakeOpenVPN() {
 	}
 	fmt.Println("TUN/TAP device tun-test opened")
 	fmt.Println("net_addr_v4_add: 10.44.0.7/24 dev tun-test")
+	if path := os.Getenv("OVPNTUI_FAKE_ROUTES"); path != "" {
+		_ = os.WriteFile(path, []byte("0.0.0.0/1\n128.0.0.0/1\nserver/32\n"), 0o600)
+		defer func() { _ = os.Remove(path) }()
+	}
 	fmt.Println("Initialization Sequence Completed")
 	if os.Getenv("OVPNTUI_FAKE_EXIT") == "1" {
 		os.Exit(7)
 	}
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	<-signals
+	if os.Getenv("OVPNTUI_FAKE_IGNORE_SIGNALS") == "1" {
+		signal.Ignore(os.Interrupt, syscall.SIGTERM)
+	}
+	commands := make(chan string, 8)
+	go func() {
+		for scanner.Scan() {
+			commands <- scanner.Text()
+		}
+		close(commands)
+	}()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-signals:
+			return
+		case command, ok := <-commands:
+			if os.Getenv("OVPNTUI_FAKE_STUCK") == "1" {
+				if !ok {
+					commands = nil
+				}
+				continue
+			}
+			if command == "signal SIGTERM" || (!ok && managementSignal && remap == "SIGTERM") {
+				if os.Getenv("OVPNTUI_FAKE_CLEANUP_ERROR") == "1" {
+					fmt.Println("ERROR: route deletion failed: Operation not permitted")
+				}
+				fmt.Println("graceful cleanup completed")
+				return
+			}
+			if !ok {
+				commands = nil
+			}
+		case <-ticker.C:
+			if path := os.Getenv("OVPNTUI_FAKE_NETWORK_LOSS"); path != "" {
+				if _, err := os.Stat(path); err == nil && remap == "SIGTERM" {
+					_, _ = fmt.Fprintln(conn, ">STATE:1788541201,EXITING,ping-restart,,,,,")
+					return
+				}
+			}
+		}
+	}
 }
 
 func TestManagerHandlesBrowserSSO(t *testing.T) {
@@ -226,7 +285,201 @@ func wantState(t *testing.T, manager *Manager, id string, want Status) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("state = %s, want %s; snapshot=%#v", manager.Snapshot(id).Status, want, manager.Snapshot(id))
+	t.Fatalf("state = %s, want %s; snapshot=%#v; logs=%v", manager.Snapshot(id).Status, want, manager.Snapshot(id), manager.Logs(id))
 }
 
 func structCredentials() credentials.Value { return credentials.Value{} }
+
+func supervisedFixture(t *testing.T) (*Manager, profile.Profile, string) {
+	t.Helper()
+	t.Setenv("OVPNTUI_FAKE_OPENVPN", "1")
+	// Simulate a root child which the unprivileged daemon cannot signal.
+	t.Setenv("OVPNTUI_FAKE_IGNORE_SIGNALS", "1")
+	paths, p := integrationFixture(t)
+	routes := filepath.Join(paths.RuntimeDir, "routes")
+	t.Setenv("OVPNTUI_FAKE_ROUTES", routes)
+	m := NewManager(context.Background(), paths, os.Args[0], PrivilegeNone)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := m.Shutdown(ctx); err != nil {
+			t.Error(err)
+			m.mu.RLock()
+			defer m.mu.RUnlock()
+			for _, s := range m.sessions {
+				_ = s.cmd.Process.Kill()
+			}
+		}
+	})
+	return m, p, routes
+}
+
+func assertRoutesRemoved(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("simulated routes were not cleaned up: %v", err)
+	}
+}
+
+func TestStopUsesManagementAndWaitsForCleanup(t *testing.T) {
+	m, p, routes := supervisedFixture(t)
+	argsPath := filepath.Join(t.TempDir(), "args")
+	t.Setenv("OVPNTUI_FAKE_ARGS", argsPath)
+	if err := m.Start(p, credentials.Value{}); err != nil {
+		t.Fatal(err)
+	}
+	wantState(t, m, p.ID, Connected)
+	if _, err := os.Stat(routes); err != nil {
+		t.Fatal(err)
+	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"--management-signal\n", "--remap-usr1\nSIGTERM\n", "--ping\n0\n", "--ping-restart\n0\n", "--keepalive\n10\n30", "--pull-filter\nignore\nping"} {
+		if !strings.Contains(string(args), required) {
+			t.Fatalf("missing safety arguments %q", required)
+		}
+	}
+	if err := m.Stop(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	wantState(t, m, p.ID, Disconnected)
+	assertRoutesRemoved(t, routes)
+	if !strings.Contains(strings.Join(m.Logs(p.ID), "\n"), "graceful cleanup completed") {
+		t.Fatal("final cleanup log was lost")
+	}
+}
+
+func TestStopBeforeManagementIsReady(t *testing.T) {
+	m, p, routes := supervisedFixture(t)
+	t.Setenv("OVPNTUI_FAKE_SLOW_START", "1")
+	if err := m.Start(p, credentials.Value{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Stop(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Stop(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	wantState(t, m, p.ID, Disconnected)
+	assertRoutesRemoved(t, routes)
+}
+
+func TestNetworkLossCleansRoutesAndAllowsFreshConnection(t *testing.T) {
+	m, p, routes := supervisedFixture(t)
+	loss := filepath.Join(t.TempDir(), "network-loss")
+	t.Setenv("OVPNTUI_FAKE_NETWORK_LOSS", loss)
+	if err := m.Start(p, credentials.Value{}); err != nil {
+		t.Fatal(err)
+	}
+	wantState(t, m, p.ID, Connected)
+	if err := os.WriteFile(loss, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wantState(t, m, p.ID, Failed)
+	assertRoutesRemoved(t, routes)
+	state := m.Snapshot(p.ID)
+	if state.PID != 0 || state.Interface != "" || !state.ConnectedAt.IsZero() || !strings.Contains(state.Error, "ping-restart") {
+		t.Fatalf("stale or missing state after network loss: %#v", state)
+	}
+	if err := os.Remove(loss); err != nil {
+		t.Fatal(err)
+	}
+	// Session filenames must also allow reconnecting within the same second.
+	if err := m.Start(p, credentials.Value{}); err != nil {
+		t.Fatal(err)
+	}
+	wantState(t, m, p.ID, Connected)
+}
+
+func TestManagementDisconnectCleansRoutes(t *testing.T) {
+	m, p, routes := supervisedFixture(t)
+	if err := m.Start(p, credentials.Value{}); err != nil {
+		t.Fatal(err)
+	}
+	wantState(t, m, p.ID, Connected)
+	m.mu.RLock()
+	s := m.sessions[p.ID]
+	m.mu.RUnlock()
+	s.managementMu.Lock()
+	err := s.managementConn.Close()
+	s.managementMu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantState(t, m, p.ID, Failed)
+	assertRoutesRemoved(t, routes)
+}
+
+func TestShutdownCleansRoutesAndRejectsNewSessions(t *testing.T) {
+	m, p, routes := supervisedFixture(t)
+	if err := m.Start(p, credentials.Value{}); err != nil {
+		t.Fatal(err)
+	}
+	wantState(t, m, p.ID, Connected)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := m.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertRoutesRemoved(t, routes)
+	if err := m.Start(p, credentials.Value{}); err == nil {
+		t.Fatal("Start succeeded after Shutdown")
+	}
+}
+
+func TestCleanupErrorIsNotReportedAsDisconnected(t *testing.T) {
+	m, p, _ := supervisedFixture(t)
+	t.Setenv("OVPNTUI_FAKE_CLEANUP_ERROR", "1")
+	if err := m.Start(p, credentials.Value{}); err != nil {
+		t.Fatal(err)
+	}
+	wantState(t, m, p.ID, Connected)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := m.Shutdown(ctx); err == nil || !strings.Contains(err.Error(), "route deletion failed") {
+		t.Fatalf("Shutdown did not propagate the cleanup failure: %v", err)
+	}
+	wantState(t, m, p.ID, Failed)
+	if !strings.Contains(m.Snapshot(p.ID).Error, "route deletion failed") {
+		t.Fatal("cleanup error was discarded")
+	}
+}
+
+func TestUnresponsiveChildRemainsTracked(t *testing.T) {
+	m, p, routes := supervisedFixture(t)
+	t.Setenv("OVPNTUI_FAKE_IGNORE_SIGNALS", "0")
+	t.Setenv("OVPNTUI_FAKE_STUCK", "1")
+	if err := m.Start(p, credentials.Value{}); err != nil {
+		t.Fatal(err)
+	}
+	wantState(t, m, p.ID, Connected)
+	m.mu.RLock()
+	s := m.sessions[p.ID]
+	m.mu.RUnlock()
+	defer func() { _ = s.cmd.Process.Signal(syscall.SIGTERM) }()
+	if err := m.Stop(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for m.Snapshot(p.ID).Error == "" && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	state := m.Snapshot(p.ID)
+	if state.Status != Disconnecting || !strings.Contains(state.Error, "routes may still be active") {
+		t.Fatalf("unconfirmed shutdown was hidden: %#v", state)
+	}
+	if _, err := os.Stat(routes); err != nil {
+		t.Fatal("child was killed before cleanup")
+	}
+	if err := m.Start(p, credentials.Value{}); err == nil {
+		t.Fatal("a second session was allowed while the old child was still alive")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := m.Shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("shutdown failed to report the live child: %v", err)
+	}
+}

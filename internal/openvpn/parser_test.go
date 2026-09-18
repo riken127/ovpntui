@@ -11,6 +11,8 @@ func TestParseLogLine(t *testing.T) {
 		{"TUN/TAP device tun0 opened", func(e LogEvent) bool { return e.Interface == "tun0" }},
 		{"net_iface_up: set ovpn-dco0 up", func(e LogEvent) bool { return e.Interface == "ovpn-dco0" }},
 		{"net_addr_v4_add: 10.8.0.2/24 dev tun0", func(e LogEvent) bool { return e.IP == "10.8.0.2" }},
+		{"Opened utun device utun4", func(e LogEvent) bool { return e.Interface == "utun4" }},
+		{"/sbin/ifconfig utun4 10.64.252.5 10.64.252.5 netmask 255.255.255.0 mtu 1500 up", func(e LogEvent) bool { return e.IP == "10.64.252.5" }},
 		{"Initialization Sequence Completed", func(e LogEvent) bool { return e.Connected }},
 		{"AUTH_FAILED", func(e LogEvent) bool { return e.Failure != "" }},
 		{"Options error: missing certificate", func(e LogEvent) bool { return e.Failure != "" }},

@@ -15,6 +15,7 @@ import (
 type authorizationController struct {
 	updates  chan struct{}
 	captured credentials.Value
+	state    openvpn.Snapshot
 }
 
 func TestStateBadgesHaveStableLabels(t *testing.T) {
@@ -44,6 +45,9 @@ func (c *authorizationController) Start(_ profile.Profile, value credentials.Val
 }
 func (c *authorizationController) Stop(string) error { return nil }
 func (c *authorizationController) Snapshot(id string) openvpn.Snapshot {
+	if c.state.Status != "" {
+		return c.state
+	}
 	return openvpn.Snapshot{ProfileID: id, Status: openvpn.Disconnected}
 }
 func (c *authorizationController) Logs(string) []string     { return nil }
@@ -87,5 +91,23 @@ func TestBrowserSSOShortcutDoesNotCollectPassword(t *testing.T) {
 	_ = cmd()
 	if !controller.captured.BrowserSSO || controller.captured.Username != "alice" || controller.captured.Password != "" {
 		t.Fatalf("captured SSO credentials = %#v", controller.captured)
+	}
+}
+
+func TestDisconnectTimeoutIsVisibleWhileChildStillRuns(t *testing.T) {
+	t.Parallel()
+	p := profile.Profile{ID: "0123456789abcdef01234567", Name: "Work"}
+	c := &authorizationController{
+		updates: make(chan struct{}, 1),
+		state: openvpn.Snapshot{ProfileID: p.ID, Status: openvpn.Disconnecting,
+			Error: "OpenVPN has not confirmed shutdown; VPN routes may still be active"},
+	}
+	m := New(profile.NewStore(t.TempDir()), c, credentials.NewStore())
+	updated, _ := m.Update(profilesMsg{profiles: []profile.Profile{p}})
+	m = updated.(Model)
+	updated, _ = m.Update(managerMsg{})
+	m = updated.(Model)
+	if !m.statusError || !strings.Contains(m.status, "routes may still be active") {
+		t.Fatalf("shutdown warning is hidden: %q", m.status)
 	}
 }

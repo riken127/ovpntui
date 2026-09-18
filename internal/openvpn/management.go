@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -17,14 +18,20 @@ const managementConnectTimeout = 8 * time.Second
 type managementEvent struct {
 	authPending bool
 	authURL     string
+	state       string
+	detail      string
 }
 
 func parseManagementLine(line string) managementEvent {
 	event := managementEvent{}
 	if strings.HasPrefix(line, ">STATE:") {
 		fields := strings.Split(strings.TrimPrefix(line, ">STATE:"), ",")
-		if len(fields) > 1 && fields[1] == "AUTH_PENDING" {
-			event.authPending = true
+		if len(fields) > 1 {
+			event.state = fields[1]
+			event.authPending = fields[1] == "AUTH_PENDING"
+		}
+		if len(fields) > 2 {
+			event.detail = fields[2]
 		}
 		return event
 	}
@@ -63,7 +70,15 @@ func (m *Manager) manage(id string, s *session) {
 	}
 	defer func() { _ = conn.Close() }()
 
-	if _, err := fmt.Fprint(conn, "version 5\nstate on\nhold release\n"); err != nil {
+	s.managementMu.Lock()
+	s.managementConn = conn
+	// Publish readiness after initialization, so a racing Stop cannot be
+	// followed by hold release on the same connection.
+	_ = conn.SetWriteDeadline(time.Now().Add(time.Second))
+	_, err = fmt.Fprint(conn, "version 5\nstate on\nhold off\nhold release\n")
+	close(s.managementReady)
+	s.managementMu.Unlock()
+	if err != nil {
 		m.failManagement(id, s, fmt.Errorf("initialize OpenVPN management channel: %w", err))
 		return
 	}
@@ -71,6 +86,7 @@ func (m *Manager) manage(id string, s *session) {
 	scanner.Buffer(make([]byte, 16*1024), 1024*1024)
 	for scanner.Scan() {
 		event := parseManagementLine(scanner.Text())
+		m.updateManagementState(id, s, event)
 		if event.authPending {
 			m.setAuthPending(id, s, event.authURL)
 		}
@@ -153,26 +169,107 @@ func (m *Manager) failManagement(id string, s *session, err error) {
 	}
 	state := m.states[id]
 	state.Error = err.Error()
+	state.Status = Disconnecting
+	s.stopping = true
+	s.stopError = err.Error()
 	m.states[id] = state
-	pid := s.cmd.Process.Pid
 	m.mu.Unlock()
 	m.appendInternalLog(id, s, err.Error())
 	m.notify()
-	if signalErr := signalProcessGroup(pid); signalErr != nil {
-		_ = s.cmd.Process.Kill()
+	go m.stopSession(id, s)
+}
+
+// The socket is already authorized for the daemon's user, so this works even
+// when OpenVPN runs as root and the sudo timestamp has expired.
+func (s *session) terminateViaManagement() error {
+	s.managementMu.Lock()
+	defer s.managementMu.Unlock()
+	if s.managementConn == nil {
+		return errors.New("OpenVPN management channel is unavailable")
 	}
+	_ = s.managementConn.SetWriteDeadline(time.Now().Add(time.Second))
+	_, err := fmt.Fprint(s.managementConn, "signal SIGTERM\n")
+	if err != nil {
+		// --management-signal + --remap-usr1 SIGTERM makes EOF another
+		// graceful termination path, without signaling an elevated PID.
+		_ = s.managementConn.Close()
+	}
+	return err
+}
+
+func (m *Manager) stopSession(id string, s *session) {
+	select {
+	case <-s.done:
+		return
+	case <-s.managementReady:
+	case <-time.After(managementConnectTimeout):
+	}
+	if err := s.terminateViaManagement(); err != nil {
+		m.appendInternalLog(id, s, "management disconnect: "+err.Error())
+		// SIGTERM lets an accessible child (or a cooperating privilege
+		// wrapper) clean up. Never SIGKILL the wrapper or claim it cleaned up.
+		if signalErr := s.cmd.Process.Signal(syscall.SIGTERM); signalErr != nil {
+			m.appendInternalLog(id, s, "termination signal: "+signalErr.Error())
+		}
+	}
+	select {
+	case <-s.done:
+		return
+	case <-time.After(8 * time.Second):
+	}
+	// Dropping management also requests graceful exit if the command stalled.
+	s.managementMu.Lock()
+	if s.managementConn != nil {
+		_ = s.managementConn.Close()
+	}
+	s.managementMu.Unlock()
+	m.mu.Lock()
+	if m.sessions[id] == s {
+		state := m.states[id]
+		state.Error = "OpenVPN has not confirmed shutdown; VPN routes may still be active"
+		m.states[id] = state
+	}
+	m.mu.Unlock()
+	m.notify()
+}
+
+func (m *Manager) updateManagementState(id string, s *session, event managementEvent) {
+	if event.state != "RECONNECTING" && event.state != "EXITING" {
+		return
+	}
+	m.mu.Lock()
+	if m.sessions[id] != s || s.stopping {
+		m.mu.Unlock()
+		return
+	}
+	state := m.states[id]
+	state.Status = Disconnecting
+	state.ConnectedAt = time.Time{}
+	state.AuthPending = false
+	state.AuthURL = ""
+	state.AuthError = ""
+	s.stopping = true
+	s.stopError = "VPN connection ended (" + event.detail + "); reconnect the profile once the network is available"
+	state.Error = s.stopError
+	m.states[id] = state
+	m.mu.Unlock()
+	m.notify()
+	go m.stopSession(id, s)
 }
 
 func (m *Manager) appendInternalLog(id string, s *session, line string) {
 	line = "ovpntui: " + line
-	_, _ = fmt.Fprintln(s.log, line)
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sessions[id] != s {
+		return
+	}
+	_, _ = fmt.Fprintln(s.log, line)
 	lines := append(m.logs[id], line)
 	if len(lines) > 2000 {
 		lines = append([]string(nil), lines[len(lines)-2000:]...)
 	}
 	m.logs[id] = lines
-	m.mu.Unlock()
 }
 
 func openExternalBrowser(rawURL string) error {

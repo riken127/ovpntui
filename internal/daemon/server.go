@@ -53,12 +53,21 @@ func NewServer(paths config.Paths, backend backend, profiles profileLoader) *Ser
 
 func SocketPath(paths config.Paths) string { return filepath.Join(paths.RuntimeDir, socketFilename) }
 
-func (s *Server) Serve(ctx context.Context) error {
+func (s *Server) Serve(ctx context.Context) (serveErr error) {
 	ctx, s.cancel = context.WithCancel(ctx)
 	if err := s.listen(); err != nil {
 		return err
 	}
-	defer func() { _ = s.Close() }()
+	defer func() {
+		// Keep the instance lock until the old VPN children have shut down.
+		// Otherwise a replacement daemon can overwrite their runtime files.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+		if err := s.backend.Shutdown(shutdownCtx); err != nil {
+			serveErr = errors.Join(serveErr, fmt.Errorf("shutdown OpenVPN sessions: %w", err))
+		}
+		_ = s.Close()
+	}()
 	go func() {
 		<-ctx.Done()
 		_ = s.listener.Close()

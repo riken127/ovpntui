@@ -172,6 +172,26 @@ referências como `ca`, `cert`, `key`, `pkcs12`, `dh`, `tls-auth`, `tls-crypt`,
 
 ## Troubleshooting
 
+### Desligamento e perda de Wi-Fi/rede
+
+O daemon pede o encerramento pelo canal de gestão do OpenVPN, incluindo quando
+o processo corre via sudo/pkexec. A sessão só fica `disconnected` depois de o
+processo terminar sem erros de limpeza reportados. Se não confirmar a saída,
+fica `disconnecting` com um erro; não é criada uma segunda sessão desse perfil.
+
+A app define keepalive de 10/30 segundos e substitui os temporizadores do perfil
+e os `ping*` enviados pelo servidor. Um timeout, perda do canal de gestão ou
+outro reinício `SIGUSR1` termina a sessão normalmente, removendo as rotas através
+do próprio OpenVPN, mesmo com `persist-tun`. Após recuperar a rede, liga novamente
+o perfil. Pode ser necessário repetir a autenticação SSO. Fechar apenas a TUI
+continua a manter a VPN ligada.
+
+Esta política permite tráfego fora da VPN após a limpeza; não é um kill switch.
+A atualização exige reiniciar o daemon antigo; compilar os novos
+binários não altera processos que já estejam em execução.
+
+### Outros problemas
+
 - **`openvpn is not installed`**: instala o pacote OpenVPN ou usa
   `--openvpn=/caminho/absoluto`.
 - **autorização sudo necessária**: introduz a password de administrador no
