@@ -1,6 +1,6 @@
 # ovpntui
 
-`ovpntui` é um gestor TUI leve para perfis OpenVPN em Linux. A interface usa
+`ovpntui` é um gestor TUI leve para perfis OpenVPN em Linux e macOS. A interface usa
 [Bubble Tea](https://github.com/charmbracelet/bubbletea),
 [Bubbles](https://github.com/charmbracelet/bubbles) e
 [Lip Gloss](https://github.com/charmbracelet/lipgloss); as ligações são sempre
@@ -28,8 +28,8 @@ feitas pelo binário `openvpn` instalado no sistema.
 
 ## Dependências e instalação
 
-Requer Linux, Go 1.24+ para compilar e OpenVPN 2.x em runtime. `sudo` ou
-`pkexec` é recomendado. Para guardar credenciais também é necessário
+Requer Go 1.24+ para compilar e OpenVPN 2.x em runtime. `sudo` ou, em Linux,
+`pkexec` é recomendado. Em Linux, para guardar credenciais também é necessário
 `secret-tool` (normalmente fornecido por `libsecret-tools`).
 
 Em Debian/Ubuntu:
@@ -142,11 +142,11 @@ necessárias ou quando se usa uma configuração que não requer elevação. Con
 capabilities diretamente a binários tem implicações de segurança e não é feito
 automaticamente por esta aplicação.
 
-Ao desligar um perfil, `ovpntuid` envia `SIGINT` ao grupo do helper/OpenVPN e
-espera até oito segundos antes de usar `SIGKILL`. Esta abordagem permite ao
-OpenVPN remover rotas e interfaces normalmente e faz com que `sudo`/`pkexec`
-encaminhem o sinal para o filho elevado. `SIGTERM`, `SIGHUP` ou `SIGINT` enviados
-ao daemon desligam todas as sessões de forma controlada.
+Ao desligar um perfil, `ovpntuid` pede `SIGTERM` pelo canal de gestão privado do
+OpenVPN e espera pela saída do processo. Se não houver confirmação, mantém a
+sessão em `disconnecting` e avisa que as rotas podem continuar ativas. `SIGTERM`,
+`SIGHUP` ou `SIGINT` enviados ao daemon pedem o encerramento de todas as sessões;
+o daemon mantém o lock de instância até a limpeza terminar.
 
 Os pedidos de arranque contêm apenas o ID de um perfil persistido. O daemon volta
 a carregar e validar a cópia privada antes de a passar ao OpenVPN. Diretivas que

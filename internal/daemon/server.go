@@ -63,7 +63,7 @@ func (s *Server) Serve(ctx context.Context) (serveErr error) {
 		// Otherwise a replacement daemon can overwrite their runtime files.
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 		defer cancel()
-		if err := s.backend.Shutdown(shutdownCtx); err != nil {
+		if err := s.shutdownBackend(shutdownCtx); err != nil {
 			serveErr = errors.Join(serveErr, fmt.Errorf("shutdown OpenVPN sessions: %w", err))
 		}
 		_ = s.Close()
@@ -82,6 +82,16 @@ func (s *Server) Serve(ctx context.Context) (serveErr error) {
 		}
 		go s.handle(conn)
 	}
+}
+
+// A timed out shutdown means a child may still own routes and runtime files.
+// Keep the daemon and its instance lock alive until that child exits.
+func (s *Server) shutdownBackend(ctx context.Context) error {
+	err := s.backend.Shutdown(ctx)
+	if errors.Is(err, context.DeadlineExceeded) {
+		return s.backend.Shutdown(context.Background())
+	}
+	return err
 }
 
 func (s *Server) listen() error {
