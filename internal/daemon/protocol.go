@@ -6,6 +6,8 @@ import (
 )
 
 const (
+	protocolVersion = 1
+
 	actionPing     = "ping"
 	actionStart    = "start"
 	actionStop     = "stop"
@@ -24,6 +26,7 @@ type request struct {
 
 type response struct {
 	OK       bool             `json:"ok"`
+	Version  int              `json:"version,omitempty"`
 	Error    string           `json:"error,omitempty"`
 	Code     string           `json:"code,omitempty"`
 	Snapshot openvpn.Snapshot `json:"snapshot,omitempty"`

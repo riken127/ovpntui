@@ -16,11 +16,14 @@ import (
 // EnsureRunning starts the per-user daemon when it is not already available.
 func EnsureRunning(paths config.Paths, openvpnBin string, privilege openvpn.PrivilegeMode) error {
 	probe := NewClient(paths)
-	if err := probe.Ping(); err == nil {
-		probe.Close()
+	err := probe.Ping()
+	probe.Close()
+	if err == nil {
 		return nil
 	}
-	probe.Close()
+	if errors.Is(err, ErrDaemonIncompatible) {
+		return fmt.Errorf("%w; close active VPN sessions with 'ovpntui --stop-daemon' before restarting", err)
+	}
 	daemonBin, err := findDaemonBinary()
 	if err != nil {
 		return err
@@ -52,6 +55,9 @@ func EnsureRunning(paths config.Paths, openvpnBin string, privilege openvpn.Priv
 		client.Close()
 		if err == nil {
 			return nil
+		}
+		if errors.Is(err, ErrDaemonIncompatible) {
+			return fmt.Errorf("%w; close active VPN sessions with 'ovpntui --stop-daemon' before restarting", err)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

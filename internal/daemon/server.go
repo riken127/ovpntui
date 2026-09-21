@@ -188,7 +188,7 @@ func (s *Server) handle(conn net.Conn) {
 func (s *Server) dispatch(req request) response {
 	switch req.Action {
 	case actionPing:
-		return response{OK: true}
+		return response{OK: true, Version: protocolVersion}
 	case actionStart:
 		p, err := s.profiles.Get(req.ProfileID)
 		if err != nil {

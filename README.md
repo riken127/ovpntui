@@ -1,6 +1,6 @@
 # ovpntui
 
-`ovpntui` é um gestor TUI leve para perfis OpenVPN em Linux e macOS. A interface usa
+`ovpntui` é um gestor TUI para perfis OpenVPN em Linux e macOS. A interface usa
 [Bubble Tea](https://github.com/charmbracelet/bubbletea),
 [Bubbles](https://github.com/charmbracelet/bubbles) e
 [Lip Gloss](https://github.com/charmbracelet/lipgloss); as ligações são sempre
@@ -26,30 +26,45 @@ feitas pelo binário `openvpn` instalado no sistema.
 - Deteta saídas inesperadas e encerra processos filhos ao desligar um perfil ou
   ao terminar explicitamente o daemon.
 
-## Dependências e instalação
+## Começar
 
-Requer Go 1.24+ para compilar e OpenVPN 2.x em runtime. `sudo` ou, em Linux,
-`pkexec` é recomendado. Em Linux, para guardar credenciais também é necessário
-`secret-tool` (normalmente fornecido por `libsecret-tools`).
+Requer OpenVPN 2.x em runtime e Go 1.24+ para compilar. A TUI corre com a conta
+normal do utilizador e eleva apenas o processo OpenVPN por `sudo` ou, em Linux,
+`pkexec`. Para guardar credenciais é preciso `secret-tool` e um Secret Service
+disponível; sem eles, continua a ser possível ligar sem guardar a password.
 
 Em Debian/Ubuntu:
 
 ```sh
 sudo apt install openvpn libsecret-tools
-go install github.com/riken127/ovpntui/cmd/ovpntui@latest
-go install github.com/riken127/ovpntui/cmd/ovpntuid@latest
 ```
 
-Para compilar o checkout (os dois binários são necessários e devem permanecer
-na mesma diretoria):
+Em macOS com Homebrew:
+
+```sh
+brew install openvpn
+```
+
+Instala os **dois** binários com Go:
+
+```sh
+go install github.com/riken127/ovpntui/cmd/ovpntui@latest
+go install github.com/riken127/ovpntui/cmd/ovpntuid@latest
+ovpntui
+```
+
+Garante que `$(go env GOPATH)/bin` está no `PATH`. Para compilar o checkout e
+usar os binários locais:
 
 ```sh
 make build
 ./bin/ovpntui
 ```
 
-Também há arquivos de release `linux/amd64` e `linux/arm64` produzidos pelo
-GoReleaser. Copia o binário para um diretório no `PATH`.
+`make install` instala ambos em `~/.local/bin`; podes definir outro destino com
+`make install INSTALL_DIR=/caminho`. Existem também arquivos de release para
+Linux e macOS, em `amd64` e `arm64`. Extrai sempre os **dois** binários para a
+mesma diretoria, ou coloca ambos no `PATH`.
 
 ## Utilização
 
@@ -105,6 +120,9 @@ Na primeira execução, `ovpntui` inicia automaticamente `ovpntuid` em backgroun
 O daemon é executado pela conta normal do utilizador e comunica através de um
 Unix socket `0600`. Se voltares a abrir a TUI, ela recupera os estados e logs das
 sessões que o daemon continua a supervisionar.
+Se atualizares a TUI enquanto um daemon antigo ainda corre, a app avisa que as
+versões são incompatíveis. Desliga as sessões ativas com
+`ovpntui --stop-daemon` e volta a abrir a TUI para iniciar o daemon novo.
 
 Cada processo OpenVPN tem ainda um management Unix socket privado, criado dentro
 da diretoria runtime `0700` e acessível apenas ao utilizador. É este canal que
@@ -205,7 +223,7 @@ binários não altera processos que já estejam em execução.
   includes, logging/management ou daemonização. Elas impediriam supervisão segura
   de um OpenVPN elevado.
 - **`permission denied` / falha ao criar TUN**: confirma a política de sudo/polkit
-  e a disponibilidade de `/dev/net/tun`.
+  e, em Linux, a disponibilidade de `/dev/net/tun`.
 - **certificado ou ficheiro em falta**: volta a importar a partir de uma pasta que
   contenha todas as referências relativas. O erro indica a diretiva e o caminho.
 - **credenciais não são guardadas**: instala `secret-tool` e confirma que existe
@@ -220,20 +238,30 @@ binários não altera processos que já estejam em execução.
   Confirma que `xdg-open` está instalado e que o URL fornecido pelo servidor usa
   HTTPS.
 
+## Contribuir
+
+Contribuições são bem-vindas. Consulta [CONTRIBUTING.md](CONTRIBUTING.md) para
+configurar o ambiente, conhecer a estrutura do projeto e preparar uma pull
+request. Bugs e propostas de melhoria podem ser descritos em issues; inclui o
+sistema operativo, a versão do OpenVPN, os passos para reproduzir e logs com
+endereços, credenciais e tokens removidos.
+
 ## Desenvolvimento
 
 ```sh
-make fmt
-make test
+make build
+make check
 make race
+make fmt
 make lint
 ```
 
 Os testes de integração usam um processo OpenVPN falso e não criam interfaces,
 rotas ou ligações reais. Também testam o protocolo Unix socket, reabertura do
 cliente, lock de instância única e limpeza de credenciais runtime abandonadas. A
-CI executa build, race tests e `golangci-lint`. Tags `v*` publicam `ovpntui` e
-`ovpntuid` para Linux através de GoReleaser.
+CI valida Linux e macOS com build, testes, race detector e `golangci-lint`.
+`make lint` requer `golangci-lint` localmente. Tags `v*` publicam `ovpntui` e
+`ovpntuid` para Linux e macOS através de GoReleaser.
 
 ## Licença
 

@@ -24,9 +24,17 @@ func NewClient(paths config.Paths) *Client {
 }
 
 func (c *Client) Ping() error {
-	_, err := c.call(request{Action: actionPing}, 2*time.Second)
-	return err
+	resp, err := c.call(request{Action: actionPing}, 2*time.Second)
+	if err != nil {
+		return err
+	}
+	if resp.Version != protocolVersion {
+		return fmt.Errorf("%w: daemon protocol %d, client protocol %d", ErrDaemonIncompatible, resp.Version, protocolVersion)
+	}
+	return nil
 }
+
+var ErrDaemonIncompatible = errors.New("ovpntuid is incompatible with this ovpntui version")
 
 func (c *Client) Start(p profile.Profile, credential credentials.Value) error {
 	elevationPassword := credential.ElevationPassword

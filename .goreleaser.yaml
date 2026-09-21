@@ -4,8 +4,7 @@ project_name: ovpntui
 
 before:
   hooks:
-    - go mod tidy
-    - go test ./...
+    - go mod verify
 
 builds:
   - id: ovpntui
@@ -15,6 +14,7 @@ builds:
       - CGO_ENABLED=0
     goos:
       - linux
+      - darwin
     goarch:
       - amd64
       - arm64
@@ -29,6 +29,7 @@ builds:
       - CGO_ENABLED=0
     goos:
       - linux
+      - darwin
     goarch:
       - amd64
       - arm64
