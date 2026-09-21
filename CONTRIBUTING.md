@@ -1,54 +1,41 @@
-# Contribuir para o ovpntui
+# Contributing to ovpntui
 
-Obrigado por quereres contribuir. Issues e pull requests são bem-vindas para
-correções, melhorias de usabilidade e compatibilidade com perfis OpenVPN.
+Bug reports, usability improvements, and OpenVPN compatibility fixes are welcome.
 
-## Preparar o ambiente
+## Set up your environment
 
-- Go 1.24 ou superior e `make` para compilar.
-- OpenVPN 2.x para testar ligações reais. O build e os testes existentes não
-  precisam de privilégios de administrador nem alteram as rotas do sistema.
-- `golangci-lint` é necessário apenas para `make lint`.
+- Go 1.24 or newer and \`make\` are needed to build the project.
+- OpenVPN 2.x is needed only for manual VPN testing. The build and existing tests do not require administrator privileges or change system routes.
+- \`golangci-lint\` is needed only for \`make lint\`.
 
-```sh
+\`\`\`sh
 git clone https://github.com/riken127/ovpntui.git
 cd ovpntui
 make check
 ./bin/ovpntui --version
-```
+\`\`\`
 
-`make check` verifica formatação, executa `go vet`, os testes existentes e o
-build. `make race` executa os mesmos testes com o detetor de concorrência.
-`make fmt` formata os ficheiros Go. Para experimentar uma alteração local,
-`make install` instala os dois binários em `~/.local/bin`.
+\`make check\` checks formatting, runs \`go vet\` and the existing tests, and builds both binaries. \`make race\` runs the tests with Go's race detector. \`make fmt\` formats Go files. To try a local build, \`make install\` installs both binaries in \`~/.local/bin\`.
 
-## Estrutura do projeto
+## Project structure
 
-- `cmd/ovpntui`: CLI e arranque da interface.
-- `cmd/ovpntuid`: daemon por utilizador.
-- `internal/tui`: interface de terminal.
-- `internal/daemon`: protocolo local, arranque e ciclo de vida do daemon.
-- `internal/openvpn`: processo OpenVPN, management socket e estados da sessão.
-- `internal/profile`: importação, validação e armazenamento dos perfis.
-- `internal/credentials`: integração opcional com Secret Service.
+- \`cmd/ovpntui\`: CLI and TUI startup.
+- \`cmd/ovpntuid\`: per-user daemon.
+- \`internal/tui\`: terminal interface.
+- \`internal/daemon\`: local protocol, daemon startup, and lifecycle.
+- \`internal/openvpn\`: OpenVPN process, management socket, and session state.
+- \`internal/profile\`: profile import, validation, and storage.
+- \`internal/credentials\`: optional Secret Service integration.
 
-O daemon corre com o utilizador normal e eleva apenas o OpenVPN. A validação de
-perfis importados e as permissões das diretorias privadas são limites de
-segurança: explica qualquer alteração a esses comportamentos na pull request.
+The daemon runs as a normal user and elevates only the OpenVPN process. Imported-profile validation and private-directory permissions are security boundaries. Explain changes to either in your pull request.
 
-## Abrir uma issue ou pull request
+## Issues and pull requests
 
-1. Pesquisa issues e pull requests existentes antes de abrir uma nova.
-2. Descreve o comportamento observado, o esperado e como reproduzir. Indica o
-   sistema operativo, a versão do Go e a versão do OpenVPN.
-3. Mantém a alteração focada e explica no PR o que mudou e como foi validado.
-4. Executa `make check` antes de enviar. Para alterações ao supervisor ou ao
-   protocolo, executa também `make race`.
+1. Search existing issues and pull requests before opening a new one.
+2. Describe the observed and expected behavior, reproduction steps, operating system, Go version, and OpenVPN version.
+3. Keep the change focused. Explain what changed and how you verified it.
+4. Run \`make check\` before submitting. For supervisor or protocol changes, also run \`make race\`.
 
-Os testes de integração usam um OpenVPN simulado. Para alterações de rotas ou
-desligamento, descreve também a validação manual numa VPN de teste e o estado
-das rotas antes e depois; os testes não criam um túnel real.
+Integration tests use a simulated OpenVPN process. For routing or disconnect changes, describe any manual validation on a test VPN and the routes observed before and after. The tests do not create a real tunnel.
 
-Nunca coloques perfis reais, chaves, passwords, URLs de SSO com tokens ou logs
-com dados sensíveis numa issue ou pull request. Remove esses dados dos exemplos
-antes de os publicar.
+Do not publish real profiles, private keys, passwords, SSO URLs containing tokens, or sensitive logs in an issue or pull request. Redact these values from examples.
